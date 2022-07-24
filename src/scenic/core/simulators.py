@@ -119,8 +119,11 @@ class Simulation:
             data out of the simulation: the other attributes of this class are primarily
             for internal use.
     """
-
+    def __new__(cls, scene, timestep=1, verbosity=0):
+        q = super(Simulation,cls).__new__(cls)
+        return q
     def __init__(self, scene, timestep=1, verbosity=0):
+        print("THISISRUNNING")
         self.result = None
         self.scene = scene
         self.objects = list(scene.objects)
@@ -193,6 +196,7 @@ class Simulation:
                 if maxSteps and self.currentTime >= maxSteps:
                     terminationReason = f'reached time limit ({maxSteps} steps)'
                     terminationType = TerminationType.timeLimit
+                    print("happens")
                     break
 
                 # Compute the actions of the agents in this time step
@@ -226,6 +230,9 @@ class Simulation:
 
                 # Run the simulation for a single step and read its state back into Scenic
                 self.step()
+                for obj in self.objects:
+                    if not obj.carlaActor.is_alive:
+                        self.objects.remove(obj)
                 self.updateObjects()
                 self.currentTime += 1
 
@@ -327,18 +334,22 @@ class Simulation:
     def updateObjects(self):
         """Update the positions and other properties of objects from the simulation."""
         for obj in self.objects:
-            # Get latest values of dynamic properties from simulation
-            properties = obj._dynamicProperties
-            values = self.getProperties(obj, properties)
-            assert properties == set(values), properties ^ set(values)
+            if obj.carlaActor is not None:
+                # Get latest values of dynamic properties from simulation
+                properties = obj._dynamicProperties
+                values = self.getProperties(obj, properties)
+                if values is None:
+                    self.objects.remove(obj)
+                    continue # dont return here
+                assert properties == set(values), properties ^ set(values)
 
-            # Preserve some other properties which are assigned internally by Scenic
-            for prop in self.mutableProperties(obj):
-                values[prop] = getattr(obj, prop)
+                # Preserve some other properties which are assigned internally by Scenic
+                for prop in self.mutableProperties(obj):
+                    values[prop] = getattr(obj, prop)
 
-            # Make a new copy of the object to ensure that computed properties like
-            # visibleRegion, etc. are recomputed
-            setDynamicProxyFor(obj, obj._copyWith(**values))
+                # Make a new copy of the object to ensure that computed properties like
+                # visibleRegion, etc. are recomputed
+                setDynamicProxyFor(obj, obj._copyWith(**values))
 
     def mutableProperties(self, obj):
         return {'lastActions', 'behavior'}

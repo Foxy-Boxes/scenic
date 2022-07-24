@@ -17,7 +17,13 @@ class DrivingSimulation(Simulation):
     `FollowLaneBehavior` and related behaviors, so that the parameters of these
     controllers can be customized for different simulators.
     """
-
+    def __new__(cls, scene, timestep=1, verbosity=0):
+        q = super(DrivingSimulation,cls).__new__(cls, scene, timestep, verbosity)
+        return q
+    def __init__(self, scene, timestep=1, verbosity=0):
+        print("X")
+        super().__init__( scene, timestep, verbosity)
+    
     def getLaneFollowingControllers(self, agent):
         """Get longitudinal and lateral controllers for lane following.
 

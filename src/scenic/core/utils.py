@@ -45,7 +45,7 @@ def alarm(seconds, handler=None, noNesting=False):
         signal.signal(signal.SIGALRM, handler)
         if noNesting:
             assert oldHandler is signal.SIG_DFL, 'SIGALRM handler already installed'
-    except ValueError:
+    except AttributeError:
         yield      # SIGALRM not supported on Windows
         return
     previous = signal.alarm(seconds)

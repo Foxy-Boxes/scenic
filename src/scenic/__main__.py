@@ -157,6 +157,11 @@ def runSimulation(scene):
     if args.verbosity >= 1:
         totalTime = time.time() - startTime
         print(f'  Ran simulation in {totalTime:.4g} seconds.')
+    try:
+        if simulation:
+            pass
+    except:
+        simulation = None
     if simulation and args.show_records:
         for name, value in simulation.result.records.items():
             if isinstance(value, list):

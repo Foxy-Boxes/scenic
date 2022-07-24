@@ -8,6 +8,7 @@ except ImportError as e:
 import math
 import os
 import warnings
+import weakref
 
 from scenic.syntax.translator import verbosity
 if verbosity == 0:	# suppress pygame advertisement at zero verbosity
@@ -34,6 +35,7 @@ class CarlaSimulator(DrivingSimulator):
 		if carla_map is not None:
 			self.world = self.client.load_world(carla_map)
 		else:
+			self.world = self.client.reload_world()
 			if map_path.endswith('.xodr'):
 				with open(map_path) as odr_file:
 					self.world = self.client.generate_opendrive_world(odr_file.read())
@@ -45,6 +47,7 @@ class CarlaSimulator(DrivingSimulator):
 			traffic_manager_port = port + 6000
 		self.tm = self.client.get_trafficmanager(traffic_manager_port)
 		self.tm.set_synchronous_mode(True)
+		
 
 		# Set to synchronous with fixed timestep
 		settings = self.world.get_settings()
@@ -74,13 +77,26 @@ class CarlaSimulator(DrivingSimulator):
 
 
 class CarlaSimulation(DrivingSimulation):
+	_alive = []
+	def __new__(cls,scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
+		print(cls)
+		self = super(CarlaSimulation, cls).__new__(cls, scene, timestep, verbosity)
+		print(self)
+		CarlaSimulation._alive.append(self)
+		self.__init__(scene, client, tm, timestep, render, record, scenario_number, verbosity)
+
+		return weakref.proxy(self)
+	def suicide(self):
+		self._alive.remove(self)
 	def __init__(self, scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
-		super().__init__(scene, timestep=timestep, verbosity=verbosity)
+		
+		super(CarlaSimulation,self).__init__(scene, timestep=timestep, verbosity=verbosity)
 		self.client = client
 		self.world = self.client.get_world()
 		self.map = self.world.get_map()
 		self.blueprintLib = self.world.get_blueprint_library()
 		self.tm = tm
+		self.destroyed = False
 		
 		weather = scene.params.get("weather")
 		if weather is not None:
@@ -235,29 +251,49 @@ class CarlaSimulation(DrivingSimulation):
 			pygame.display.flip()
 
 	def getProperties(self, obj, properties):
+		if(self.destroyed):
+			
+			return dict(
+				position=None,
+				elevation=0,
+				heading=0,
+				velocity=None,
+				speed=0,
+				angularSpeed=0,)
 		# Extract Carla properties
 		carlaActor = obj.carlaActor
-		currTransform = carlaActor.get_transform()
-		currLoc = currTransform.location
-		currRot = currTransform.rotation
-		currVel = carlaActor.get_velocity()
-		currAngVel = carlaActor.get_angular_velocity()
+		try:
+			currTransform = carlaActor.get_transform()
+			currLoc = currTransform.location
+			currRot = currTransform.rotation
+			currVel = carlaActor.get_velocity()
+			currAngVel = carlaActor.get_angular_velocity()
 
 		# Prepare Scenic object properties
-		velocity = utils.carlaToScenicPosition(currVel)
-		speed = math.hypot(*velocity)
+			velocity = utils.carlaToScenicPosition(currVel)
+			speed = math.hypot(*velocity)
 
-		values = dict(
-			position=utils.carlaToScenicPosition(currLoc),
-			elevation=utils.carlaToScenicElevation(currLoc),
-			heading=utils.carlaToScenicHeading(currRot),
-			velocity=velocity,
-			speed=speed,
-			angularSpeed=utils.carlaToScenicAngularSpeed(currAngVel),
-		)
-		return values
-
+			values = dict(
+				position=utils.carlaToScenicPosition(currLoc),
+				elevation=utils.carlaToScenicElevation(currLoc),
+				heading=utils.carlaToScenicHeading(currRot),
+				velocity=velocity,
+				speed=speed,
+				angularSpeed=utils.carlaToScenicAngularSpeed(currAngVel),
+			)
+			return values
+		except Exception as e:
+			print(e)
+			print(obj)
+			self.world = self.client.reload_world()
+			return None
+	def run(self,maxSteps):
+		super().run(maxSteps)
+		self.suicide()
 	def destroy(self):
+		if(self.destroyed):
+			return
+		self.destroyed = True
 		for obj in self.objects:
 			if obj.carlaActor is not None:
 				if isinstance(obj.carlaActor, carla.Vehicle):
@@ -265,11 +301,23 @@ class CarlaSimulation(DrivingSimulation):
 				if isinstance(obj.carlaActor, carla.Walker):
 					obj.carlaController.stop()
 					obj.carlaController.destroy()
-				obj.carlaActor.destroy()
+				if obj.carlaActor is not None:
+                                        try:
+                                                obj.carlaActor.destroy()
+                                        except RuntimeError:
+                                                print("Was already destroyed skipping...")
+                                                self.destroyed = True
+				self.objects.remove(obj)
 		if self.render and self.cameraManager:
-			self.cameraManager.destroy_sensor()
+			try:
+				self.cameraManager.destroy_sensor()
+			except RuntimeError:
+				print("Camera was already destroyed skipping...")
 
 		self.client.stop_recorder()
 
+
 		self.world.tick()
 		super().destroy()
+		self.world = self.client.reload_world()
+		
