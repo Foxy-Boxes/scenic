@@ -1,9 +1,9 @@
 """Simulator interface for CARLA."""
 
 try:
-	import carla
+    import carla
 except ImportError as e:
-	raise ModuleNotFoundError('CARLA scenarios require the "carla" Python package') from e
+    raise ModuleNotFoundError('CARLA scenarios require the "carla" Python package') from e
 
 import math
 import os
@@ -11,13 +11,22 @@ import warnings
 import weakref
 
 from scenic.syntax.translator import verbosity
-if verbosity == 0:	# suppress pygame advertisement at zero verbosity
-	import os
-	os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = 'hide'
+if verbosity == 0:      # suppress pygame advertisement at zero verbosity
+    import os
+    os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = 'hide'
 import pygame
+from collections import OrderedDict, defaultdict
+
+from scenic.core.object_types import (enableDynamicProxyFor, setDynamicProxyFor,
+                                      disableDynamicProxyFor)
+from scenic.core.distributions import RejectionException
+import scenic.core.dynamics as dynamics
+from scenic.core.errors import RuntimeParseError, InvalidScenarioError, optionallyDebugRejection
+from scenic.core.requirements import RequirementType
+from scenic.core.vectors import Vector
 
 from scenic.domains.driving.simulators import DrivingSimulator, DrivingSimulation
-from scenic.core.simulators import SimulationCreationError
+from scenic.core.simulators import *
 from scenic.syntax.veneer import verbosePrint
 from scenic.simulators.carla.blueprints import oldBlueprintNames
 import scenic.simulators.carla.utils.utils as utils
@@ -25,299 +34,447 @@ import scenic.simulators.carla.utils.visuals as visuals
 
 
 class CarlaSimulator(DrivingSimulator):
-	"""Implementation of `Simulator` for CARLA."""
-	def __init__(self, carla_map, map_path, address='127.0.0.1', port=2000, timeout=10,
-				 render=True, record='', timestep=0.1, traffic_manager_port=None):
-		super().__init__()
-		verbosePrint(f'Connecting to CARLA on port {port}')
-		self.client = carla.Client(address, port)
-		self.client.set_timeout(timeout)  # limits networking operations (seconds)
-		if carla_map is not None:
-			self.world = self.client.load_world(carla_map)
-		else:
-			self.world = self.client.reload_world()
-			if map_path.endswith('.xodr'):
-				with open(map_path) as odr_file:
-					self.world = self.client.generate_opendrive_world(odr_file.read())
-			else:
-				raise RuntimeError('CARLA only supports OpenDrive maps')
-		self.timestep = timestep
+    """Implementation of `Simulator` for CARLA."""
+    def __init__(self, carla_map, map_path, address='127.0.0.1', port=2000, timeout=10,
+                             render=True, record='', timestep=0.1, traffic_manager_port=None):
+        super().__init__()
+        verbosePrint(f'Connecting to CARLA on port {port}')
+        self.client = carla.Client(address, port)
+        self.client.set_timeout(timeout)  # limits networking operations (seconds)
+        if carla_map is not None:
+            self.world = self.client.load_world(carla_map)
+        else:
+            self.world = self.client.reload_world()
+            if map_path.endswith('.xodr'):
+                with open(map_path) as odr_file:
+                    self.world = self.client.generate_opendrive_world(odr_file.read())
+            else:
+                raise RuntimeError('CARLA only supports OpenDrive maps')
+        self.timestep = timestep
 
-		if traffic_manager_port is None:
-			traffic_manager_port = port + 6000
-		self.tm = self.client.get_trafficmanager(traffic_manager_port)
-		self.tm.set_synchronous_mode(True)
-		
+        if traffic_manager_port is None:
+            traffic_manager_port = port + 6000
+        self.tm = self.client.get_trafficmanager(traffic_manager_port)
+        self.tm.set_synchronous_mode(True)
 
-		# Set to synchronous with fixed timestep
-		settings = self.world.get_settings()
-		settings.synchronous_mode = True
-		settings.fixed_delta_seconds = timestep  # NOTE: Should not exceed 0.1
-		self.world.apply_settings(settings)
-		verbosePrint('Map loaded in simulator.')
 
-		self.render = render  # visualization mode ON/OFF
-		self.record = record  # whether to use the carla recorder
-		self.scenario_number = 0  # Number of the scenario executed
+        # Set to synchronous with fixed timestep
+        settings = self.world.get_settings()
+        settings.synchronous_mode = True
+        settings.fixed_delta_seconds = timestep  # NOTE: Should not exceed 0.1
+        self.world.apply_settings(settings)
+        verbosePrint('Map loaded in simulator.')
 
-	def createSimulation(self, scene, verbosity=0):
-		self.scenario_number += 1
-		return CarlaSimulation(scene, self.client, self.tm, self.timestep,
-							   render=self.render, record=self.record,
-							   scenario_number=self.scenario_number, verbosity=verbosity)
+        self.render = render  # visualization mode ON/OFF
+        self.record = record  # whether to use the carla recorder
+        self.scenario_number = 0  # Number of the scenario executed
 
-	def destroy(self):
-		settings = self.world.get_settings()
-		settings.synchronous_mode = False
-		settings.fixed_delta_seconds = None
-		self.world.apply_settings(settings)
-		self.tm.set_synchronous_mode(False)
+    def createSimulation(self, scene, verbosity=0):
+        self.scenario_number += 1
+        return CarlaSimulation(scene, self.client, self.tm, self.timestep,
+                                                   render=self.render, record=self.record,
+                                                   scenario_number=self.scenario_number, verbosity=verbosity)
 
-		super().destroy()
+    def destroy(self):
+        settings = self.world.get_settings()
+        settings.synchronous_mode = False
+        settings.fixed_delta_seconds = None
+        self.world.apply_settings(settings)
+        self.tm.set_synchronous_mode(False)
+
+        super().destroy()
 
 
 class CarlaSimulation(DrivingSimulation):
-	_alive = []
-	def __new__(cls,scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
-		print(cls)
-		self = super(CarlaSimulation, cls).__new__(cls, scene, timestep, verbosity)
-		print(self)
-		CarlaSimulation._alive.append(self)
-		self.__init__(scene, client, tm, timestep, render, record, scenario_number, verbosity)
+    _alive = []
+    def __new__(cls,scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
+        print(cls)
+        self = super(CarlaSimulation, cls).__new__(cls, scene, timestep, verbosity)
+        print(self)
+        CarlaSimulation._alive.append(self)
+        self.__init__(scene, client, tm, timestep, render, record, scenario_number, verbosity)
 
-		return weakref.proxy(self)
-	def suicide(self):
-		self._alive.remove(self)
-	def __init__(self, scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
-		
-		super(CarlaSimulation,self).__init__(scene, timestep=timestep, verbosity=verbosity)
-		self.client = client
-		self.world = self.client.get_world()
-		self.map = self.world.get_map()
-		self.blueprintLib = self.world.get_blueprint_library()
-		self.tm = tm
-		self.destroyed = False
-		
-		weather = scene.params.get("weather")
-		if weather is not None:
-			if isinstance(weather, str):
-				self.world.set_weather(getattr(carla.WeatherParameters, weather))
-			elif isinstance(weather, dict):
-				self.world.set_weather(carla.WeatherParameters(**weather))
+        return weakref.proxy(self)
+    def suicide(self):
+        self._alive.remove(self)
+    def __init__(self, scene, client, tm, timestep, render, record, scenario_number, verbosity=0):
 
-		# Reloads current world: destroys all actors, except traffic manager instances
-		# self.client.reload_world()
+        super(CarlaSimulation,self).__init__(scene, timestep=timestep, verbosity=verbosity)
+        self.client = client
+        self.world = self.client.get_world()
+        self.map = self.world.get_map()
+        self.blueprintLib = self.world.get_blueprint_library()
+        self.tm = tm
+        self.destroyed = False
 
-		# Setup HUD
-		self.render = render
-		self.record = record
-		self.scenario_number = scenario_number
-		if self.render:
-			self.displayDim = (1280, 720)
-			self.displayClock = pygame.time.Clock()
-			self.camTransform = 0
-			pygame.init()
-			pygame.font.init()
-			self.hud = visuals.HUD(*self.displayDim)
-			self.display = pygame.display.set_mode(
-				self.displayDim,
-				pygame.HWSURFACE | pygame.DOUBLEBUF
-			)
-			self.cameraManager = None
+        weather = scene.params.get("weather")
+        if weather is not None:
+            if isinstance(weather, str):
+                self.world.set_weather(getattr(carla.WeatherParameters, weather))
+            elif isinstance(weather, dict):
+                self.world.set_weather(carla.WeatherParameters(**weather))
 
-		if self.record:
-			if not os.path.exists(self.record):
-				os.mkdir(self.record)
-			name = "{}/scenario{}.log".format(self.record, self.scenario_number)
-			self.client.start_recorder(name)
+        # Reloads current world: destroys all actors, except traffic manager instances
+        # self.client.reload_world()
 
-		# Create Carla actors corresponding to Scenic objects
-		self.ego = None
-		for obj in self.objects:
-			carlaActor = self.createObjectInSimulator(obj)
+        # Setup HUD
+        self.render = False
+        self.record = record
+        self.scenario_number = scenario_number
+        if self.render:
+            self.displayDim = (1280, 720)
+            self.displayClock = pygame.time.Clock()
+            self.camTransform = 0
+            pygame.init()
+            pygame.font.init()
+            self.hud = visuals.HUD(*self.displayDim)
+            self.display = pygame.display.set_mode(
+                    self.displayDim,
+                    pygame.HWSURFACE | pygame.DOUBLEBUF
+            )
+            self.cameraManager = None
 
-			# Check if ego (from carla_scenic_taks.py)
-			if obj is self.objects[0]:
-				self.ego = obj
+        if self.record:
+            if not os.path.exists(self.record):
+                os.mkdir(self.record)
+            name = "{}/scenario{}.log".format(self.record, self.scenario_number)
+            self.client.start_recorder(name)
 
-				# Set up camera manager and collision sensor for ego
-				if self.render:
-					camIndex = 0
-					camPosIndex = 0
-					self.cameraManager = visuals.CameraManager(self.world, carlaActor, self.hud)
-					self.cameraManager._transform_index = camPosIndex
-					self.cameraManager.set_sensor(camIndex)
-					self.cameraManager.set_transform(self.camTransform)
+        # Create Carla actors corresponding to Scenic objects
+        self.ego = None
+        for obj in self.objects:
+            carlaActor = self.createObjectInSimulator(obj)
 
-		self.world.tick() ## allowing manualgearshift to take effect 	# TODO still need this?
+            # Check if ego (from carla_scenic_taks.py)
+            if obj is self.objects[0]:
+                self.ego = obj
+                self.world.tick()
+                spectator = self.world.get_spectator()
+                actor_snapshot = None
+                while actor_snapshot is None:
+                    world_snapshot = self.world.get_snapshot()
+                    #print(carlaActor)
+                    actor_snapshot = world_snapshot.find(carlaActor.id)
+                self.ego_id = carlaActor.id
+                # Set spectator at given transform (vehicle transform)
+                transform = actor_snapshot.get_transform()
+                location = carla.Location(x=transform.location.x, y=transform.location.y, z=70)
+                spectator.set_transform(
+                carla.Transform(location, carla.Rotation(yaw=180.0, pitch=-90.0)))
 
-		for obj in self.objects:
-			if isinstance(obj.carlaActor, carla.Vehicle):
-				obj.carlaActor.apply_control(carla.VehicleControl(manual_gear_shift=False))
+                # Set up camera manager and collision sensor for ego
+                if self.render:
+                    camIndex = 0
+                    camPosIndex = 0
+                    self.cameraManager = visuals.CameraManager(self.world, carlaActor, self.hud)
+                    self.cameraManager._transform_index = camPosIndex
+                    self.cameraManager.set_sensor(camIndex)
+                    self.cameraManager.set_transform(self.camTransform)
 
-		self.world.tick()
+        self.world.tick() ## allowing manualgearshift to take effect    # TODO still need this?
 
-		# Set Carla actor's initial speed (if specified)
-		for obj in self.objects:
-			if obj.speed is not None:
-				equivVel = utils.scenicSpeedToCarlaVelocity(obj.speed, obj.heading)
-				if hasattr(obj.carlaActor, 'set_target_velocity'):
-					obj.carlaActor.set_target_velocity(equivVel)
-				else:
-					obj.carlaActor.set_velocity(equivVel)
+        for obj in self.objects:
+            if isinstance(obj.carlaActor, carla.Vehicle):
+                obj.carlaActor.apply_control(carla.VehicleControl(manual_gear_shift=False))
 
-	def createObjectInSimulator(self, obj):
-		# Extract blueprint
-		try:
-			blueprint = self.blueprintLib.find(obj.blueprint)
-		except IndexError as e:
-			found = False
-			if obj.blueprint in oldBlueprintNames:
-				for oldName in oldBlueprintNames[obj.blueprint]:
-					try:
-						blueprint = self.blueprintLib.find(oldName)
-						found = True
-						warnings.warn(f'CARLA blueprint {obj.blueprint} not found; '
-						              f'using older version {oldName}')
-						obj.blueprint = oldName
-						break
-					except IndexError:
-						continue
-			if not found:
-				raise SimulationCreationError(f'Unable to find blueprint {obj.blueprint}'
-				                              f' for object {obj}') from e
-		if obj.rolename is not None:
-			blueprint.set_attribute('role_name', obj.rolename)
+        self.world.tick()
 
-		# set walker as not invincible
-		if blueprint.has_attribute('is_invincible'):
-			blueprint.set_attribute('is_invincible', 'False')
+        # Set Carla actor's initial speed (if specified)
+        for obj in self.objects:
+            if obj.speed is not None:
+                equivVel = utils.scenicSpeedToCarlaVelocity(obj.speed, obj.heading)
+                if hasattr(obj.carlaActor, 'set_target_velocity'):
+                    obj.carlaActor.set_target_velocity(equivVel)
+                else:
+                    obj.carlaActor.set_velocity(equivVel)
 
-		# Set up transform
-		loc = utils.scenicToCarlaLocation(obj.position, world=self.world, blueprint=obj.blueprint)
-		rot = utils.scenicToCarlaRotation(obj.heading)
-		transform = carla.Transform(loc, rot)
+    def createObjectInSimulator(self, obj):
+        # Extract blueprint
+        try:
+            blueprint = self.blueprintLib.find(obj.blueprint)
+        except IndexError as e:
+            found = False
+            if obj.blueprint in oldBlueprintNames:
+                for oldName in oldBlueprintNames[obj.blueprint]:
+                    try:
+                        blueprint = self.blueprintLib.find(oldName)
+                        found = True
+                        warnings.warn(f'CARLA blueprint {obj.blueprint} not found; '
+                                      f'using older version {oldName}')
+                        obj.blueprint = oldName
+                        break
+                    except IndexError:
+                        continue
+            if not found:
+                raise SimulationCreationError(f'Unable to find blueprint {obj.blueprint}'
+                                              f' for object {obj}') from e
+        if obj.rolename is not None:
+            blueprint.set_attribute('role_name', obj.rolename)
 
-		# Color, cannot be set for Pedestrians
-		if blueprint.has_attribute('color') and obj.color is not None:
-			c = obj.color
-			c_str = f'{int(c.r*255)},{int(c.g*255)},{int(c.b*255)}'
-			blueprint.set_attribute('color', c_str)
+        # set walker as not invincible
+        if blueprint.has_attribute('is_invincible'):
+            blueprint.set_attribute('is_invincible', 'False')
 
-		# Create Carla actor
-		carlaActor = self.world.try_spawn_actor(blueprint, transform)
-		if carlaActor is None:
-			self.destroy()
-			raise SimulationCreationError(f'Unable to spawn object {obj}')
-		obj.carlaActor = carlaActor
+        # Set up transform
+        loc = utils.scenicToCarlaLocation(obj.position, world=self.world, blueprint=obj.blueprint)
+        rot = utils.scenicToCarlaRotation(obj.heading)
+        transform = carla.Transform(loc, rot)
 
-		carlaActor.set_simulate_physics(obj.physics)
+        # Color, cannot be set for Pedestrians
+        if blueprint.has_attribute('color') and obj.color is not None:
+            c = obj.color
+            c_str = f'{int(c.r*255)},{int(c.g*255)},{int(c.b*255)}'
+            blueprint.set_attribute('color', c_str)
 
-		if isinstance(carlaActor, carla.Vehicle):
-			# TODO should get dimensions at compile time, not simulation time
-			obj.width = carlaActor.bounding_box.extent.y * 2
-			obj.length = carlaActor.bounding_box.extent.x * 2
-			carlaActor.apply_control(carla.VehicleControl(manual_gear_shift=True, gear=1))
-		elif isinstance(carlaActor, carla.Walker):
-			carlaActor.apply_control(carla.WalkerControl())
-			# spawn walker controller
-			controller_bp = self.blueprintLib.find('controller.ai.walker')
-			controller = self.world.try_spawn_actor(controller_bp, carla.Transform(), carlaActor)
-			if controller is None:
-				self.destroy()
-				raise SimulationCreationError(f'Unable to spawn carla controller for object {obj}')
-			obj.carlaController = controller
-		return carlaActor
+        # Create Carla actor
+        carlaActor = self.world.try_spawn_actor(blueprint, transform)
+        if carlaActor is None:
+            self.destroy()
+            raise SimulationCreationError(f'Unable to spawn object {obj}')
+        obj.carlaActor = carlaActor
 
-	def executeActions(self, allActions):
-		super().executeActions(allActions)
+        carlaActor.set_simulate_physics(obj.physics)
 
-		# Apply control updates which were accumulated while executing the actions
-		for obj in self.agents:
-			ctrl = obj._control
-			if ctrl is not None:
-				obj.carlaActor.apply_control(ctrl)
-				obj._control = None
+        if isinstance(carlaActor, carla.Vehicle):
+            # TODO should get dimensions at compile time, not simulation time
+            obj.width = carlaActor.bounding_box.extent.y * 2
+            obj.length = carlaActor.bounding_box.extent.x * 2
+            carlaActor.apply_control(carla.VehicleControl(manual_gear_shift=True, gear=1))
+        elif isinstance(carlaActor, carla.Walker):
+            carlaActor.apply_control(carla.WalkerControl())
+            # spawn walker controller
+            controller_bp = self.blueprintLib.find('controller.ai.walker')
+            controller = self.world.try_spawn_actor(controller_bp, carla.Transform(), carlaActor)
+            if controller is None:
+                self.destroy()
+                raise SimulationCreationError(f'Unable to spawn carla controller for object {obj}')
+            obj.carlaController = controller
+        return carlaActor
 
-	def step(self):
-		# Run simulation for one timestep
-		self.world.tick()
+    def executeActions(self, allActions):
+        super().executeActions(allActions)
 
-		# Render simulation
-		if self.render:
-			# self.hud.tick(self.world, self.ego, self.displayClock)
-			self.cameraManager.render(self.display)
-			# self.hud.render(self.display)
-			pygame.display.flip()
+        # Apply control updates which were accumulated while executing the actions
+        for obj in self.agents:
+            ctrl = obj._control
+            if ctrl is not None:
+                obj.carlaActor.apply_control(ctrl)
+                obj._control = None
 
-	def getProperties(self, obj, properties):
-		if(self.destroyed):
-			
-			return dict(
-				position=None,
-				elevation=0,
-				heading=0,
-				velocity=None,
-				speed=0,
-				angularSpeed=0,)
-		# Extract Carla properties
-		carlaActor = obj.carlaActor
-		try:
-			currTransform = carlaActor.get_transform()
-			currLoc = currTransform.location
-			currRot = currTransform.rotation
-			currVel = carlaActor.get_velocity()
-			currAngVel = carlaActor.get_angular_velocity()
+    def step(self):
+        # Run simulation for one timestep
+        self.world.tick()
+        spectator = self.world.get_spectator()
+        actor_snapshot = None
+        while actor_snapshot is None:
+            world_snapshot = self.world.get_snapshot()
+                    #print(carlaActor)
+            actor_snapshot = world_snapshot.find(self.ego_id)
+                # Set spectator at given transform (vehicle transform)
+        transform = actor_snapshot.get_transform()
+        location = carla.Location(x=transform.location.x, y=transform.location.y, z=70)
+        spectator.set_transform(
+            carla.Transform(location, carla.Rotation(yaw=180.0, pitch=-90.0)))
+        # Render simulation
+        if self.render:
+            # self.hud.tick(self.world, self.ego, self.displayClock)
+            self.cameraManager.render(self.display)
+            # self.hud.render(self.display)
+            pygame.display.flip()
 
-		# Prepare Scenic object properties
-			velocity = utils.carlaToScenicPosition(currVel)
-			speed = math.hypot(*velocity)
+    def getProperties(self, obj, properties):
+        if(self.destroyed):
 
-			values = dict(
-				position=utils.carlaToScenicPosition(currLoc),
-				elevation=utils.carlaToScenicElevation(currLoc),
-				heading=utils.carlaToScenicHeading(currRot),
-				velocity=velocity,
-				speed=speed,
-				angularSpeed=utils.carlaToScenicAngularSpeed(currAngVel),
-			)
-			return values
-		except Exception as e:
-			print(e)
-			print(obj)
-			self.world = self.client.reload_world()
-			return None
-	def run(self,maxSteps):
-		super().run(maxSteps)
-		self.suicide()
-	def destroy(self):
-		if(self.destroyed):
-			return
-		self.destroyed = True
-		for obj in self.objects:
-			if obj.carlaActor is not None:
-				if isinstance(obj.carlaActor, carla.Vehicle):
-					obj.carlaActor.set_autopilot(False, self.tm.get_port())
-				if isinstance(obj.carlaActor, carla.Walker):
-					obj.carlaController.stop()
-					obj.carlaController.destroy()
-				if obj.carlaActor is not None:
-                                        try:
-                                                obj.carlaActor.destroy()
-                                        except RuntimeError:
-                                                print("Was already destroyed skipping...")
-                                                self.destroyed = True
-				self.objects.remove(obj)
-		if self.render and self.cameraManager:
-			try:
-				self.cameraManager.destroy_sensor()
-			except RuntimeError:
-				print("Camera was already destroyed skipping...")
+            return dict(
+                    position=None,
+                    elevation=0,
+                    heading=0,
+                    velocity=None,
+                    speed=0,
+                    angularSpeed=0,)
+        # Extract Carla properties
+        carlaActor = obj.carlaActor
+        try:
+            currTransform = carlaActor.get_transform()
+            currLoc = currTransform.location
+            currRot = currTransform.rotation
+            currVel = carlaActor.get_velocity()
+            currAngVel = carlaActor.get_angular_velocity()
 
-		self.client.stop_recorder()
+        # Prepare Scenic object properties
+            velocity = utils.carlaToScenicPosition(currVel)
+            speed = math.hypot(*velocity)
+
+            values = dict(
+                    position=utils.carlaToScenicPosition(currLoc),
+                    elevation=utils.carlaToScenicElevation(currLoc),
+                    heading=utils.carlaToScenicHeading(currRot),
+                    velocity=velocity,
+                    speed=speed,
+                    angularSpeed=utils.carlaToScenicAngularSpeed(currAngVel),
+            )
+            return values
+        except Exception as e:
+            print(e)
+            print(obj)
+            self.world = self.client.reload_world()
+            return None
+    def run(self,maxSteps):
+        trajectory = self.trajectory
+        if self.currentTime > 0:
+            raise RuntimeError('tried to run a Simulation which has already run')
+        assert len(trajectory) == 0
+        actionSequence = []
+
+        import scenic.syntax.veneer as veneer
+        veneer.beginSimulation(self)
+        dynamicScenario = self.scene.dynamicScenario
+
+        try:
+            # Initialize dynamic scenario
+            dynamicScenario._start()
+
+            # Give objects a chance to do any simulator-specific setup
+            for obj in self.objects:
+                obj.startDynamicSimulation()
+
+            # Update all objects in case the simulator has adjusted any dynamic
+            # properties during setup
+            self.updateObjects()
+
+            # Run simulation
+            assert self.currentTime == 0
+            terminationReason = None
+            terminationType = None
+            while True:
+                if self.verbosity >= 3:
+                    print(f'    Time step {self.currentTime}:')
+
+                        # Run compose blocks of compositional scenarios
+                        # (and check if any requirements defined therein fail)
+                terminationReason = dynamicScenario._step()
+                terminationType = TerminationType.scenarioComplete
+
+                        # Record current state of the simulation
+                self.recordCurrentState()
+
+                        # Run monitors
+                newReason = dynamicScenario._runMonitors()
+                if newReason is not None:
+                    terminationReason = newReason
+                    terminationType = TerminationType.terminatedByMonitor
+
+                # "Always" and scenario-level requirements have been checked;
+                # now safe to terminate if the top-level scenario has finished,
+                # a monitor requested termination, or we've hit the timeout
+                if terminationReason is not None:
+                    break
+                terminationReason = dynamicScenario._checkSimulationTerminationConditions()
+                if terminationReason is not None:
+                    terminationType = TerminationType.simulationTerminationCondition
+                    break
+                if maxSteps and self.currentTime >= maxSteps:
+                    terminationReason = f'reached time limit ({maxSteps} steps)'
+                    terminationType = TerminationType.timeLimit
+                    print("happens")
+                    break
+
+                # Compute the actions of the agents in this time step
+                allActions = OrderedDict()
+                schedule = self.scheduleForAgents()
+                for agent in schedule:
+                    behavior = agent.behavior
+                    if not behavior._runningIterator:   # TODO remove hack
+                        behavior._start(agent)
+                    actions = behavior._step()
+                    if isinstance(actions, EndSimulationAction):
+                        terminationReason = str(actions)
+                        terminationType = TerminationType.terminatedByBehavior
+                        break
+                    assert isinstance(actions, tuple)
+                    if len(actions) == 1 and isinstance(actions[0], (list, tuple)):
+                        actions = tuple(actions[0])
+                    if not self.actionsAreCompatible(agent, actions):
+                        raise InvalidScenarioError(f'agent {agent} tried incompatible '
+                                                   f' action(s) {actions}')
+                    allActions[agent] = actions
+                if terminationReason is not None:
+                    break
+
+                # Execute the actions
+                if self.verbosity >= 3:
+                    for agent, actions in allActions.items():
+                        print(f'      Agent {agent} takes action(s) {actions}')
+                actionSequence.append(allActions)
+                self.executeActions(allActions)
+
+                # Run the simulation for a single step and read its state back into Scenic
+                self.step()
+                for obj in self.objects:
+                    if not obj.carlaActor.is_alive:
+                        self.objects.remove(obj)
+                self.updateObjects()
+                self.currentTime += 1
+
+            # Stop all remaining scenarios
+            # (and reject if some 'require eventually' condition was never satisfied)
+            for scenario in tuple(veneer.runningScenarios):
+                scenario._stop('simulation terminated')
+
+            # Record finally-recorded values
+            values = dynamicScenario._evaluateRecordedExprs(RequirementType.recordFinal)
+            for name, val in values.items():
+                self.records[name] = val
+
+            # Package up simulation results into a compact object
+            result = SimulationResult(trajectory, actionSequence, terminationType,
+                                      terminationReason, self.records)
+            self.result = result
+            return self
+        finally:
+            self.destroy()
+            for obj in self.scene.objects:
+                disableDynamicProxyFor(obj)
+            for agent in self.agents:
+                if agent.behavior._isRunning:
+                    agent.behavior._stop()
+            for monitor in self.scene.monitors:
+                if monitor._isRunning:
+                    monitor._stop()
+            # If the simulation was terminated by an exception (including rejections),
+            # some scenarios may still be running; we need to clean them up without
+            # checking their requirements, which could raise rejection exceptions.
+            for scenario in tuple(veneer.runningScenarios):
+                scenario._stop('exception', quiet=True)
+            veneer.endSimulation(self)
+        self.suicide()
+    def destroy(self):
+        if(self.destroyed):
+            return
+        self.destroyed = True
+        for obj in self.objects:
+            if obj.carlaActor is not None:
+                if isinstance(obj.carlaActor, carla.Vehicle):
+                    obj.carlaActor.set_autopilot(False, self.tm.get_port())
+                if isinstance(obj.carlaActor, carla.Walker):
+                    obj.carlaController.stop()
+                    obj.carlaController.destroy()
+                if obj.carlaActor is not None:
+                    try:
+                        obj.carlaActor.destroy()
+                    except RuntimeError:
+                        print("Was already destroyed skipping...")
+                        self.destroyed = True
+                self.objects.remove(obj)
+        if self.render and self.cameraManager:
+            try:
+                self.cameraManager.destroy_sensor()
+            except RuntimeError:
+                print("Camera was already destroyed skipping...")
+
+        self.client.stop_recorder()
 
 
-		self.world.tick()
-		super().destroy()
-		self.world = self.client.reload_world()
-		
+        self.world.tick()
+        super().destroy()
+        self.world = self.client.reload_world()
