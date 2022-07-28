@@ -158,7 +158,7 @@ class CarlaSimulation(DrivingSimulation):
                 self.ego_id = carlaActor.id
                 # Set spectator at given transform (vehicle transform)
                 transform = actor_snapshot.get_transform()
-                location = carla.Location(x=transform.location.x, y=transform.location.y, z=70)
+                location = carla.Location(x=transform.location.x, y=transform.location.y, z=30)
                 spectator.set_transform(
                 carla.Transform(location, carla.Rotation(yaw=180.0, pitch=-90.0)))
 
@@ -272,7 +272,7 @@ class CarlaSimulation(DrivingSimulation):
             actor_snapshot = world_snapshot.find(self.ego_id)
                 # Set spectator at given transform (vehicle transform)
         transform = actor_snapshot.get_transform()
-        location = carla.Location(x=transform.location.x, y=transform.location.y, z=70)
+        location = carla.Location(x=transform.location.x, y=transform.location.y, z=30)
         spectator.set_transform(
             carla.Transform(location, carla.Rotation(yaw=180.0, pitch=-90.0)))
         # Render simulation
