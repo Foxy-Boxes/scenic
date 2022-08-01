@@ -29,8 +29,10 @@ class LGSVLSimulator(simulators.Simulator):
         super().__init__()
         verbosePrint('Connecting to LGSVL Simulator...')
         self.client = lgsvl.Simulator(address=address, port=port)
-        if alwaysReload or self.client.current_scene != lgsvl_scene:
+        print(self.client.current_scene)
+        if alwaysReload or self.client.current_scene is None:
             self.client.load(scene=sceneID)
+        print(self.client.current_scene)
         verbosePrint('Map loaded in simulator.')
 
     def createSimulation(self, scene, verbosity=0):
@@ -49,7 +51,7 @@ class LGSVLSimulation(simulators.Simulation):
 
         # Reset simulator (deletes all existing objects)
         self.client.reset()
-
+        print("progress")
         # Create LGSVL objects corresponding to Scenic objects
         for obj in self.objects:
             if not hasattr(obj, 'lgsvlObject'):
@@ -64,18 +66,24 @@ class LGSVLSimulation(simulators.Simulation):
             raise RuntimeError(f'object {obj} does not have an lgsvlAgentType property')
         name = obj.lgsvlName
         agentType = obj.lgsvlAgentType
-
+        print("creating {}".format(name))
         # Set up position and orientation
         state = lgsvl.AgentState()
         elevation = obj.elevation
         if elevation is None:
             elevation = self.groundElevationAt(obj.position)
         state.transform.position = utils.scenicToLGSVLPosition(obj.position, elevation)
-        state.transform.rotation = utils.scenicToLGSVLRotation(obj.heading)
+        state.transform.rotation = utils.scenicToLGSVLRotation(obj.heading,roll=obj.roll,pitch=obj.pitch)
 
         # Create LGSVL object
         lgsvlObj = self.client.add_agent(name, agentType, state)
         obj.lgsvlObject = lgsvlObj
+        if not obj.roll == 0.0 or not obj.pitch == 0.0:
+            elevation = self.groundElevationAt(obj.position)+lgsvlObj.bounding_box.size.x/2.0
+        print("X: {}, Y: {}, Z: {}".format(lgsvlObj.bounding_box.size.x,lgsvlObj.bounding_box.size.y,lgsvlObj.bounding_box.size.z))
+        state.transform.position = utils.scenicToLGSVLPosition(obj.position, elevation)
+        state.transform.rotation = utils.scenicToLGSVLRotation(obj.heading,roll=obj.roll,pitch=obj.pitch)
+        lgsvlObj.state = state
 
         # Initialize Data
         self.data[obj] = {}
@@ -137,6 +145,7 @@ class LGSVLSimulation(simulators.Simulation):
                 obj._control = None
 
     def step(self):
+        print("-",)
         self.client.run(time_limit=self.timestep)
 
     def getProperties(self, obj, properties):
@@ -151,6 +160,8 @@ class LGSVLSimulation(simulators.Simulation):
             position=utils.lgsvlToScenicPosition(state.position),
             elevation=utils.lgsvlToScenicElevation(state.position),
             heading=utils.lgsvlToScenicRotation(state.rotation),
+            pitch=utils.lgsvlToScenicRotationPitch(state.rotation),
+            roll=utils.lgsvlToScenicRotationRoll(state.rotation),
             velocity=velocity,
             speed=speed,
             angularSpeed=utils.lgsvlToScenicAngularSpeed(state.rotation),

@@ -30,9 +30,11 @@ def scenicToCarlaLocation(pos, z=None, world=None, blueprint=None):
 	return carla.Location(pos.x, -pos.y, z)
 
 
-def scenicToCarlaRotation(heading):
+def scenicToCarlaRotation(heading,roll=0,pitch=0):
 	yaw = math.degrees(-heading) - 90
-	return carla.Rotation(yaw=yaw)
+	roll = math.degrees(roll)
+	pitch = math.degrees(pitch)
+	return carla.Rotation(yaw=yaw,roll=roll,pitch=pitch)
 
 
 def scenicSpeedToCarlaVelocity(speed, heading):
@@ -50,6 +52,12 @@ def carlaToScenicElevation(loc):
 
 def carlaToScenicHeading(rot):
 	return normalizeAngle(-math.radians(rot.yaw + 90))
+
+def carlaToScenicRoll(rot):
+	return normalizeAngle(math.radians(rot.roll))
+
+def carlaToScenicPitch(rot):
+	return normalizeAngle(math.radians(rot.pitch))
 
 def carlaToScenicAngularSpeed(vel):
 	return -math.radians(vel.y)

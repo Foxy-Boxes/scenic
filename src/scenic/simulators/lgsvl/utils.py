@@ -32,8 +32,22 @@ def lgsvlToScenicRotation(rot):
     """
     return normalizeAngle(-math.radians(rot.y))
 
+def lgsvlToScenicRotationRoll(rot):
+    """Convert LGSVL rotations to Scenic rolls.
+
+    Drops all but the Z component.
+    """
+    return normalizeAngle(-math.radians(rot.z))
+
+def lgsvlToScenicRotationPitch(rot):
+    """Convert LGSVL rotations to Scenic pitches.
+
+    Drops all but the X component.
+    """
+    return normalizeAngle(-math.radians(rot.x))
+
 def lgsvlToScenicAngularSpeed(rot):
     return -math.radians(rot.y)
 
-def scenicToLGSVLRotation(heading):
-    return lgsvl.Vector(0, -math.degrees(heading), 0)
+def scenicToLGSVLRotation(heading,roll=0,pitch=0):
+    return lgsvl.Vector(--math.degrees(pitch), -math.degrees(heading), -math.degrees(roll))

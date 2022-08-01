@@ -98,6 +98,17 @@ def apparentHeadingAtPoint(point, heading, base):
 	ox, oy = point
 	a = (heading + (math.pi / 2.0)) - math.atan2(oy - y, ox - x)
 	return normalizeAngle(a)
+def apparentRollAtPoint(point, roll, base):
+	x, y = base
+	ox, oy = point
+	a = (roll + (math.pi / 2.0)) - math.atan2(oy - y, ox - x)
+	return normalizeAngle(a)
+def apparentPitchAtPoint(point, pitch, base):
+	x, y = base
+	ox, oy = point
+	a = (pitch + (math.pi / 2.0)) - math.atan2(oy - y, ox - x)
+	return normalizeAngle(a)
+
 
 def circumcircleOfAnnulus(center, heading, angle, minDist, maxDist):
 	m = (minDist + maxDist) / 2.0

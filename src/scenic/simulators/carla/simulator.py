@@ -9,6 +9,7 @@ import math
 import os
 import warnings
 import weakref
+import pprint
 
 from scenic.syntax.translator import verbosity
 if verbosity == 0:      # suppress pygame advertisement at zero verbosity
@@ -56,7 +57,8 @@ class CarlaSimulator(DrivingSimulator):
             traffic_manager_port = port + 6000
         self.tm = self.client.get_trafficmanager(traffic_manager_port)
         self.tm.set_synchronous_mode(True)
-
+        self.tm.set_random_device_seed(0)
+        
 
         # Set to synchronous with fixed timestep
         settings = self.world.get_settings()
@@ -216,10 +218,13 @@ class CarlaSimulation(DrivingSimulation):
             blueprint.set_attribute('is_invincible', 'False')
 
         # Set up transform
+        #pprint.pprint(obj.__dict__)
         loc = utils.scenicToCarlaLocation(obj.position, world=self.world, blueprint=obj.blueprint)
-        rot = utils.scenicToCarlaRotation(obj.heading)
+        rot = utils.scenicToCarlaRotation(obj.heading,roll = obj.roll,pitch = obj.pitch)
+        if not rot.roll == 0.0 or not rot.pitch == 0.0:
+            loc.z = 10
         transform = carla.Transform(loc, rot)
-
+        
         # Color, cannot be set for Pedestrians
         if blueprint.has_attribute('color') and obj.color is not None:
             c = obj.color
@@ -233,7 +238,7 @@ class CarlaSimulation(DrivingSimulation):
             raise SimulationCreationError(f'Unable to spawn object {obj}')
         obj.carlaActor = carlaActor
 
-        carlaActor.set_simulate_physics(obj.physics)
+        
 
         if isinstance(carlaActor, carla.Vehicle):
             # TODO should get dimensions at compile time, not simulation time
@@ -249,6 +254,12 @@ class CarlaSimulation(DrivingSimulation):
                 self.destroy()
                 raise SimulationCreationError(f'Unable to spawn carla controller for object {obj}')
             obj.carlaController = controller
+        if not rot.roll == 0.0 or not rot.pitch == 0.0:
+            loc.z = (carlaActor.bounding_box.extent.y)+0.01
+        transform = carla.Transform(loc, rot)
+        carlaActor.set_simulate_physics(False)
+        carlaActor.set_transform(transform)
+        carlaActor.set_simulate_physics(obj.physics)
         return carlaActor
 
     def executeActions(self, allActions):
@@ -289,6 +300,8 @@ class CarlaSimulation(DrivingSimulation):
                     position=None,
                     elevation=0,
                     heading=0,
+                    pitch=0,
+                    roll=0,
                     velocity=None,
                     speed=0,
                     angularSpeed=0,)
@@ -309,6 +322,8 @@ class CarlaSimulation(DrivingSimulation):
                     position=utils.carlaToScenicPosition(currLoc),
                     elevation=utils.carlaToScenicElevation(currLoc),
                     heading=utils.carlaToScenicHeading(currRot),
+                    pitch=utils.carlaToScenicPitch(currRot),
+                    roll=utils.carlaToScenicRoll(currRot),
                     velocity=velocity,
                     speed=speed,
                     angularSpeed=utils.carlaToScenicAngularSpeed(currAngVel),
@@ -384,6 +399,13 @@ class CarlaSimulation(DrivingSimulation):
                 schedule = self.scheduleForAgents()
                 for agent in schedule:
                     behavior = agent.behavior
+                    if str(behavior) == "AutopilotBehavior()":
+                        if hasattr(agent,'first'):
+                            continue # it is already autopilot
+                        else:
+                            self.tm.distance_to_leading_vehicle(agent.carlaActor,2)
+                            agent.first = None
+                        
                     if not behavior._runningIterator:   # TODO remove hack
                         behavior._start(agent)
                     actions = behavior._step()
@@ -415,7 +437,7 @@ class CarlaSimulation(DrivingSimulation):
                         self.objects.remove(obj)
                 self.updateObjects()
                 self.currentTime += 1
-
+            print(terminationReason)
             # Stop all remaining scenarios
             # (and reject if some 'require eventually' condition was never satisfied)
             for scenario in tuple(veneer.runningScenarios):

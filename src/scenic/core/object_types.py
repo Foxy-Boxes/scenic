@@ -384,6 +384,8 @@ class OrientedPoint(Point):
 		  object's ``heading`` when mutation is enabled. Default value 5°.
 	"""
 	heading: PropertyDefault((), {'dynamic'}, lambda self: 0)
+	roll: PropertyDefault((), {'dynamic'}, lambda self: 0)
+	pitch: PropertyDefault((), {'dynamic'}, lambda self: 0)
 	viewAngle: math.tau
 
 	mutator: PropertyDefault({'headingStdDev'}, {'additive'},
@@ -415,6 +417,10 @@ class OrientedPoint(Point):
 
 	def toHeading(self) -> float:
 		return self.heading
+	def toRoll(self) -> float:
+		return self.roll
+	def toPitch(self) -> float:
+		return self.pitch
 
 ## Object
 
