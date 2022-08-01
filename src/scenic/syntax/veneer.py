@@ -21,6 +21,8 @@ __all__ = (
 	'Front', 'Back', 'Left', 'Right',
 	'FrontLeft', 'FrontRight', 'BackLeft', 'BackRight',
 	'RelativeHeading', 'ApparentHeading', 'RelativePosition',
+        'RelativeRoll', 'ApparentRoll',
+        'RelativePitch', 'ApparentPitch',
 	'DistanceFrom', 'DistancePast', 'AngleTo', 'AngleFrom', 'Follow',
 	# Infix operators
 	'FieldAt', 'RelativeTo', 'OffsetAlong', 'CanSee',
@@ -82,10 +84,10 @@ import typing
 from scenic.core.distributions import (RejectionException, Distribution,
 									   TupleDistribution, StarredDistribution, toDistribution,
 									   needsSampling, canUnpackDistributions, distributionFunction)
-from scenic.core.type_support import (isA, toType, toTypes, toScalar, toHeading, toVector,
+from scenic.core.type_support import (isA, toType, toTypes, toScalar, toHeading,toPitch,toRoll, toVector,
 									  evaluateRequiringEqualTypes, underlyingType,
 									  canCoerce, coerce)
-from scenic.core.geometry import normalizeAngle, apparentHeadingAtPoint
+from scenic.core.geometry import normalizeAngle, apparentHeadingAtPoint, apparentRollAtPoint, apparentPitchAtPoint
 from scenic.core.object_types import Constructible
 from scenic.core.specifiers import Specifier
 from scenic.core.lazy_eval import DelayedArgument, needsLazyEvaluation
@@ -757,6 +759,54 @@ def ApparentHeading(X, Y=None):
 		Y = ego()
 	Y = toVector(Y, '"relative heading of X from Y" with Y not a vector')
 	return apparentHeadingAtPoint(X.position, X.heading, Y)
+
+def RelativeRoll(X, Y=None):
+	"""The 'relative roll of <roll> [from <roll>]' operator.
+
+	If the 'from <roll>' is omitted, the heading of ego is used.
+	"""
+	X = toRoll(X, '"relative roll of X from Y" with X not a roll')
+	if Y is None:
+		Y = ego().roll
+	else:
+		Y = toRoll(Y, '"relative roll of X from Y" with Y not a roll')
+	return normalizeAngle(X - Y)
+
+def ApparentRoll(X, Y=None):
+	"""The 'apparent heading of <oriented point> [from <vector>]' operator.
+
+	If the 'from <vector>' is omitted, the position of ego is used.
+	"""
+	if not isinstance(X, OrientedPoint):
+		raise RuntimeParseError('"apparent heading of X from Y" with X not an OrientedPoint')
+	if Y is None:
+		Y = ego()
+	Y = toVector(Y, '"relative roll of X from Y" with Y not a vector')
+	return apparentRollAtPoint(X.position, X.roll, Y)
+
+def RelativePitch(X, Y=None):
+	"""The 'relative pitch of <pitch> [from <pitch>]' operator.
+
+	If the 'from <pitch>' is omitted, the heading of ego is used.
+	"""
+	X = toPitch(X, '"relative pitch of X from Y" with X not a pitch')
+	if Y is None:
+		Y = ego().pitch
+	else:
+		Y = toPitch(Y, '"relative pitch of X from Y" with Y not a pitch')
+	return normalizeAngle(X - Y)
+
+def ApparentPitch(X, Y=None):
+	"""The 'apparent pitch of <oriented point> [from <vector>]' operator.
+
+	If the 'from <vector>' is omitted, the position of ego is used.
+	"""
+	if not isinstance(X, OrientedPoint):
+		raise RuntimeParseError('"apparent pitch of X from Y" with X not an OrientedPoint')
+	if Y is None:
+		Y = ego()
+	Y = toVector(Y, '"relative pitch of X from Y" with Y not a vector')
+	return apparentPitchAtPoint(X.position, X.pitch, Y)
 
 def DistanceFrom(X, Y=None):
 	"""The ``distance from {X} to {Y}`` polymorphic operator.

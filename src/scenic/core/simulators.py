@@ -230,9 +230,6 @@ class Simulation:
 
                 # Run the simulation for a single step and read its state back into Scenic
                 self.step()
-                for obj in self.objects:
-                    if not obj.carlaActor.is_alive:
-                        self.objects.remove(obj)
                 self.updateObjects()
                 self.currentTime += 1
 
@@ -334,22 +331,21 @@ class Simulation:
     def updateObjects(self):
         """Update the positions and other properties of objects from the simulation."""
         for obj in self.objects:
-            if obj.carlaActor is not None:
-                # Get latest values of dynamic properties from simulation
-                properties = obj._dynamicProperties
-                values = self.getProperties(obj, properties)
-                if values is None:
-                    self.objects.remove(obj)
-                    continue # dont return here
-                assert properties == set(values), properties ^ set(values)
+            # Get latest values of dynamic properties from simulation
+            properties = obj._dynamicProperties
+            values = self.getProperties(obj, properties)
+            if values is None:
+                self.objects.remove(obj)
+                continue # dont return here
+            assert properties == set(values), properties ^ set(values)
 
-                # Preserve some other properties which are assigned internally by Scenic
-                for prop in self.mutableProperties(obj):
-                    values[prop] = getattr(obj, prop)
+            # Preserve some other properties which are assigned internally by Scenic
+            for prop in self.mutableProperties(obj):
+                values[prop] = getattr(obj, prop)
 
-                # Make a new copy of the object to ensure that computed properties like
-                # visibleRegion, etc. are recomputed
-                setDynamicProxyFor(obj, obj._copyWith(**values))
+            # Make a new copy of the object to ensure that computed properties like
+            # visibleRegion, etc. are recomputed
+            setDynamicProxyFor(obj, obj._copyWith(**values))
 
     def mutableProperties(self, obj):
         return {'lastActions', 'behavior'}

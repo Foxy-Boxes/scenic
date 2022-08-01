@@ -19,6 +19,12 @@ exceptional rules:
 	* Coercible to a heading (type `Heading`):
 		* Anything coercible to a scalar
 		* Any type with a **toHeading** method (including `OrientedPoint`)
+	* Coercible to a roll (type `Roll`):
+		* Anything coercible to a scalar
+		* Any type with a **toRoll** method (including `OrientedPoint`)
+	* Coercible to a pitch (type `Pitch`):
+		* Anything coercible to a scalar
+		* Any type with a **toPitch** method (including `OrientedPoint`)
 	* Coercible to a vector (type `Vector`):
 		* Tuples and lists of length 2
 		* Any type with a **toVector** method (including `Point`)
@@ -44,6 +50,12 @@ from scenic.core.utils import get_type_origin, get_type_args
 
 class Heading(float):
 	"""Dummy class used as a target for type coercions to headings."""
+	pass
+class Roll(float):
+	"""Dummy class used as a target for type coercions to rolls."""
+	pass
+class Pitch(float):
+	"""Dummy class used as a target for type coercions to pitches."""
 	pass
 
 def underlyingType(thing):
@@ -95,6 +107,10 @@ def canCoerceType(typeA, typeB):
 		return issubclass(typeA, numbers.Real)
 	elif typeB is Heading:
 		return canCoerceType(typeA, float) or hasattr(typeA, 'toHeading')
+	elif typeB is Roll:
+		return canCoerceType(typeA, float) or hasattr(typeA, 'toRoll')
+	elif typeB is Pitch:
+		return canCoerceType(typeA, float) or hasattr(typeA, 'toPitch')
 	elif typeB is Vector:
 		return issubclass(typeA, (tuple, list)) or hasattr(typeA, 'toVector')
 	elif typeB is veneer.Behavior:
@@ -128,6 +144,14 @@ def coerce(thing, ty, error='wrong type'):
 		coercer = coerceToFloat
 	elif ty is Heading:
 		coercer = coerceToHeading
+		ty = numbers.Real
+		realType = float
+	elif ty is Roll:
+		coercer = coerceToRoll
+		ty = numbers.Real
+		realType = float
+	elif ty is Pitch:
+		coercer = coerceToPitch
 		ty = numbers.Real
 		realType = float
 	elif ty is Vector:
@@ -175,6 +199,16 @@ def coerceToFloat(thing) -> float:
 def coerceToHeading(thing) -> float:
 	if hasattr(thing, 'toHeading'):
 		return thing.toHeading()
+	return float(thing)
+
+def coerceToRoll(thing) -> float:
+	if hasattr(thing, 'toRoll'):
+		return thing.toRoll()
+	return float(thing)
+
+def coerceToPitch(thing) -> float:
+	if hasattr(thing, 'toPitch'):
+		return thing.toPitch()
 	return float(thing)
 
 def coerceToVector(thing) -> Vector:
@@ -298,6 +332,20 @@ def toHeading(thing, typeError='non-heading in heading context'):
 	See `toTypes` for details.
 	"""
 	return toType(thing, Heading, typeError)
+
+def toRoll(thing, typeError='non-heading in heading context'):
+	"""Convert something to a heading, raising an error if impossible.
+
+	See `toTypes` for details.
+	"""
+	return toType(thing, Roll, typeError)
+
+def toPitch(thing, typeError='non-heading in heading context'):
+	"""Convert something to a heading, raising an error if impossible.
+
+	See `toTypes` for details.
+	"""
+	return toType(thing, Pitch, typeError)
 
 def toVector(thing, typeError='non-vector in vector context'):
 	"""Convert something to a vector, raising an error if impossible.
