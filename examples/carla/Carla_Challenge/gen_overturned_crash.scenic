@@ -31,7 +31,7 @@ behavior EgoBehavior(speed=70):
 ego = Car following roadDirection from spot for 0,
 	with blueprint EGO_MODEL,
 	with allowCollisions True,
-	with behavior EgoBehavior()
+	with behavior OpenpilotBehavior()
 
 
 car_1 = Car at spot_1,

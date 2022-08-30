@@ -7,6 +7,7 @@ import carla as _carla
 from scenic.domains.driving.actions import *
 import scenic.simulators.carla.utils.utils as _utils
 import scenic.simulators.carla.model as _carlaModel
+import scenic.simulators.carla.behavior_client as _behavior_client
 
 ################################################
 # Actions available to all carla.Actor objects #
@@ -104,6 +105,23 @@ class SetAutopilotAction(VehicleAction):
 	def applyTo(self, obj, sim):
 		vehicle = obj.carlaActor
 		vehicle.set_autopilot(self.enabled, sim.tm.get_port())
+
+class SetOpenpilotAction(VehicleAction):
+        def __init__(self, default_speed, steer_ratio):
+                if not isinstance(default_speed, int):
+                        print(type(default_speed))
+                        raise RuntimeError('default_speed must be an int.')
+                if not isinstance(steer_ratio, int):
+                        print(type(steer_ratio))
+                        raise RuntimeError('steer_ratio must be an int.')
+                self.default_speed = default_speed
+                self.steer_ratio = steer_ratio
+        def applyTo(self, obj, sim):
+                vehicle_id = obj.carlaActor.id
+                #send vehicle_id, default_speed, steer_ratio to behavior server
+                _behavior_client.send_openpilot_init(self.default_speed, self.steer_ratio, vehicle_id)
+                
+                
 
 class SetVehicleLightStateAction(VehicleAction):
 	"""Set the vehicle lights' states.

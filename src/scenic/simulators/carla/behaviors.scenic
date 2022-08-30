@@ -12,6 +12,10 @@ behavior AutopilotBehavior():
     """Behavior causing a vehicle to use CARLA's built-in autopilot."""
     take SetAutopilotAction(True)
 
+behavior OpenpilotBehavior(speed=40,steer_ratio=15):
+    """Behavior causing a vehicle to use CARLA's built-in autopilot."""
+    take SetOpenpilotAction(speed,steer_ratio)
+
 behavior WalkForwardBehavior(speed=0.5):
 	take SetWalkingDirectionAction(self.heading), SetWalkingSpeedAction(speed)
 
